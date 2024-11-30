@@ -2,6 +2,8 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Networking; // For UnityWebRequest
+using UnityEngine.UI; // For UI components
 
 public class MxInkHandler : StylusHandler
 {
@@ -38,6 +40,15 @@ public class MxInkHandler : StylusHandler
     // List to keep track of drawn lines or points
     private List<GameObject> _drawnElements = new List<GameObject>();
 
+    // URL of the Google Docs document
+    private string _documentURL = "https://docs.google.com/document/d/1ZVQcdNvOR46HBUCtVy6XKFOXocRYL9-TR_LLrRfJ2T8/export?format=txt";
+
+    // Reference to the Text component on the paper
+    private Text _paperText;
+
+    // Coroutine for updating the document text
+    private Coroutine _updateTextCoroutine;
+
     private void Awake()
     {
         _tipActionRef.action.Enable();
@@ -54,6 +65,10 @@ public class MxInkHandler : StylusHandler
     private void OnDestroy()
     {
         InputSystem.onDeviceChange -= OnDeviceChange;
+        if (_updateTextCoroutine != null)
+        {
+            StopCoroutine(_updateTextCoroutine);
+        }
     }
 
     private void OnDeviceChange(InputDevice device, InputDeviceChange change)
@@ -99,6 +114,12 @@ public class MxInkHandler : StylusHandler
             {
                 PlacePaperAtCurrentPosition();
                 _paperPlaced = true;
+
+                // Start updating the text
+                if (_updateTextCoroutine == null)
+                {
+                    _updateTextCoroutine = StartCoroutine(UpdateDocumentText());
+                }
             }
             else
             {
@@ -180,6 +201,56 @@ public class MxInkHandler : StylusHandler
         _paper.transform.localScale = new Vector3(0.1f, 1f, 0.1f);
         // Set the paper's material color to white
         _paper.GetComponent<Renderer>().material.color = Color.white;
+
+        // Create a Canvas as a child of the paper
+        GameObject canvasObject = new GameObject("PaperCanvas");
+        canvasObject.transform.SetParent(_paper.transform, false);
+        canvasObject.transform.localPosition = new Vector3(0f, 0.01f, 0f); // Slightly above the paper surface
+        // canvasObject.transform.localRotation = Quaternion.Euler(90f, 0f, 0f); // Rotate so canvas faces upwards
+        canvasObject.transform.localRotation = Quaternion.Euler(90f, 90f, 0f); // Rotate so canvas faces upwards
+
+        canvasObject.transform.localScale = Vector3.one * 0.01f; // Adjust scale to match paper size
+
+        Canvas canvas = canvasObject.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+        canvas.worldCamera = Camera.main; // Assign the main camera
+
+        // Set the size of the Canvas
+        RectTransform canvasRect = canvas.GetComponent<RectTransform>();
+        canvasRect.sizeDelta = new Vector2(1000f, 1000f); // Adjust size as needed
+
+        // Add an Image component for the background
+        GameObject imageObject = new GameObject("PaperBackground");
+        imageObject.transform.SetParent(canvasObject.transform, false);
+        Image image = imageObject.AddComponent<Image>();
+        image.color = Color.white;
+
+        RectTransform imageRect = image.GetComponent<RectTransform>();
+        imageRect.sizeDelta = canvasRect.sizeDelta;
+        imageRect.localPosition = Vector3.zero;
+
+        // Create a Text UI element
+        GameObject textObject = new GameObject("PaperText");
+        textObject.transform.SetParent(canvasObject.transform, false);
+        textObject.transform.localPosition = Vector3.zero;
+        textObject.transform.localRotation = Quaternion.identity;
+
+        Text text = textObject.AddComponent<Text>();
+        text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        text.fontSize = 20;
+        text.alignment = TextAnchor.MiddleCenter;
+        text.horizontalOverflow = HorizontalWrapMode.Wrap;
+        text.verticalOverflow = VerticalWrapMode.Truncate;
+        text.color = Color.black;
+        text.text = "Loading...";
+
+        // Adjust the RectTransform
+        RectTransform textRect = text.GetComponent<RectTransform>();
+        textRect.sizeDelta = canvasRect.sizeDelta; // Match the canvas size
+        textRect.localPosition = Vector3.zero;
+
+        // Assign the text reference
+        _paperText = text;
     }
 
     private void CreateResetButton()
@@ -207,6 +278,13 @@ public class MxInkHandler : StylusHandler
             Destroy(_paper);
             _paper = null;
             _paperPlaced = false;
+
+            // Stop updating the text
+            if (_updateTextCoroutine != null)
+            {
+                StopCoroutine(_updateTextCoroutine);
+                _updateTextCoroutine = null;
+            }
         }
         // Destroy all drawn elements
         foreach (GameObject element in _drawnElements)
@@ -281,5 +359,36 @@ public class MxInkHandler : StylusHandler
     public override bool CanDraw()
     {
         return true;
+    }
+
+    private IEnumerator UpdateDocumentText()
+    {
+        while (true)
+        {
+            using (UnityWebRequest www = UnityWebRequest.Get(_documentURL))
+            {
+                yield return www.SendWebRequest();
+
+                if (www.result == UnityWebRequest.Result.ConnectionError || www.result == UnityWebRequest.Result.ProtocolError)
+                {
+                    Debug.LogError("Error fetching document text: " + www.error);
+                    if (_paperText != null)
+                    {
+                        _paperText.text = "Error loading document";
+                    }
+                }
+                else
+                {
+                    string text = www.downloadHandler.text;
+                    if (_paperText != null)
+                    {
+                        _paperText.text = text;
+                    }
+                }
+            }
+
+            // Wait for some time before fetching again
+            yield return new WaitForSeconds(10f); // Update every 10 seconds
+        }
     }
 }
