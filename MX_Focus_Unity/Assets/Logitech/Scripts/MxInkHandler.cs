@@ -41,7 +41,7 @@ public class MxInkHandler : StylusHandler
     private List<GameObject> _drawnElements = new List<GameObject>();
 
     // URL of the Google Docs document
-    private string _documentURL = "https://docs.google.com/document/d/1ZVQcdNvOR46HBUCtVy6XKFOXocRYL9-TR_LLrRfJ2T8/export?format=txt";
+    private string _documentURL = "https://docs.google.com/document/d/1GcIXo94zBM-XJd1duxemQnhjOSwQERW17WEa2QHvS70/export?format=txt";
 
     // Reference to the Text component on the paper
     private Text _paperText;
@@ -194,7 +194,7 @@ public class MxInkHandler : StylusHandler
     {
         // Create a plane to represent the paper
         _paper = GameObject.CreatePrimitive(PrimitiveType.Plane);
-        Vector3 paperPosition = transform.position + Vector3.down * 0.01f; // Slightly below the tip
+        Vector3 paperPosition = transform.position + Vector3.down * 0.015f; // Slightly below the tip
         _paper.transform.position = paperPosition;
         _paper.transform.rotation = Quaternion.Euler(0, transform.eulerAngles.y, 0);
         // Scale the paper to a reasonable size
@@ -388,7 +388,7 @@ public class MxInkHandler : StylusHandler
             }
 
             // Wait for some time before fetching again
-            yield return new WaitForSeconds(10f); // Update every 10 seconds
+            yield return new WaitForSeconds(1f); // Update every 1 second
         }
     }
 }
