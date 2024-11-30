@@ -53,5 +53,5 @@
         "temp/": true,
         "Temp/": true
     },
-    "dotnet.defaultSolution": "MX_Ink_OpenXR_Sample.sln"
+    "dotnet.defaultSolution": "MX_Focus_Unity.sln"
 }
