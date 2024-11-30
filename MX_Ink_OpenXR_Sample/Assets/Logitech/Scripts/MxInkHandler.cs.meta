@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 4964b49330484e840a7e7fcd26364423
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - _tipActionRef: {fileID: 106152260777017392, guid: 1918761d077289d4bba84fc491bee96b, type: 3}
+  - _grabActionRef: {fileID: -1164434066174278975, guid: 1918761d077289d4bba84fc491bee96b, type: 3}
+  - _optionActionRef: {fileID: -3998739080497272086, guid: 1918761d077289d4bba84fc491bee96b, type: 3}
+  - _middleActionRef: {fileID: -3775169633974974777, guid: 1918761d077289d4bba84fc491bee96b, type: 3}
+  - _tip: {instanceID: 0}
+  - _cluster_front: {instanceID: 0}
+  - _cluster_middle: {instanceID: 0}
+  - _cluster_back: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
