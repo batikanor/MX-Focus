@@ -1,5 +1,7 @@
 ## MX Focus Reader
 
+In this project, we aim to teach students how to maintain focus while performing tasks such as taking an exam. We have developed a VR application that simulates an exam environment. In this setup, the teacher can create and update questions in real-time through a Google Sheet, which is synchronized with the VR environment. The student must stay focused to answer the questions. If the student loses focus, their writing within the VR environment will become shaky and inaccurate. This dynamic helps train students to maintain focus while completing tasks.
+
 ![eeg_headband](muse/calmness_model.png)
 
 The project consists of the following key components:
