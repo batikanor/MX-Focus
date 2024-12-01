@@ -2,22 +2,47 @@
 
 In this project, we aim to teach students how to maintain focus while performing tasks such as taking an exam. We have developed a VR application that simulates an exam environment. In this setup, the teacher can create and update questions in real-time through a Google Sheet, which is synchronized with the VR environment. The student must stay focused to answer the questions. If the student loses focus, their writing within the VR environment will become shaky and inaccurate. This dynamic helps train students to maintain focus while completing tasks.
 
+---
+
 ![eeg_headband](muse/calmness_model.png)
 
-The project consists of the following key components:
-1. **Muse Headband**: A wearable EEG device that captures real-time brainwave signals.
-2. **MuseLSL (Muse Labs Streamer)**: Software that streams EEG data from the Muse Headband in real-time using the Lab Streaming Layer (LSL) protocol.
-3. **AWS IoT Core**: Cloud service for securely transmitting EEG data from the MuseLSL to the cloud for further processing.
-4. **Scikit-learn Model**: A machine learning model trained to analyze EEG data and classify the user's calmness based on the frequency bands of the brainwaves.
-5. **API Gateway**: AWS API Gateway is used to expose the calmness score as a REST API, making it accessible for external applications (web, mobile).
+---
 
-### High-Level Workflow
+## Project Components
+
+The project consists of the following key components:
+
+1. **VR Environment**: A virtual reality application where students take an exam, simulating a living exam-writing context. In the VR environment, students are required to maintain focus to answer questions accurately.
+
+2. **Teacher's Google Sheet**: The teacher uses a Google Sheet to create and update exam questions. The sheet is synced in real-time with the VR environment, so any changes made by the teacher are immediately reflected in the exam.
+
+3. **Focus Tracking**: A system that tracks the student's focus through EEG signals. If the student becomes distracted, their writing in the VR environment starts to become shaky and inaccurate, providing immediate feedback.
+
+4. **Muse Headband**: A wearable EEG device that captures real-time brainwave signals from the student, used to monitor their focus during the exam.
+
+5. **MuseLSL (Muse Labs Streamer)**: Software that streams the EEG data from the Muse Headband to the cloud in real-time using the Lab Streaming Layer (LSL) protocol.
+
+6. **AWS IoT Core**: A cloud service used to securely transmit EEG data from MuseLSL to the cloud for further processing.
+
+7. **Scikit-learn Model**: A machine learning model that processes the EEG data to assess the student's level of focus based on brainwave frequency bands.
+
+8. **API Gateway**: AWS API Gateway is used to expose the focus score as a REST API, making it accessible for external applications to retrieve and display the student's focus level.
+
+---
+
+## High-Level Workflow
+
 The process flows as follows:
-1. The **User** wears the **Muse Headband**, which records EEG signals.
-2. **MuseLSL** streams the EEG data in real-time to **AWS IoT Core**.
-3. **AWS IoT Core** sends the data to a **Scikit-learn** model for processing.
-4. The model generates a **calmness score** based on the EEG data.
-5. The calmness score is exposed via **AWS API Gateway** and can be retrieved by external applications.
+
+1. The **Student** wears the **Muse Headband** to capture real-time EEG signals during the exam.
+
+2. The **MuseLSL** software streams the EEG data to **AWS IoT Core** in real-time for processing.
+
+3. **AWS IoT Core** transmits the data to a **Scikit-learn model** running in the cloud, which processes the EEG signals to evaluate the student's focus level.
+
+4. The model generates a **focus score**, which indicates how focused the student is while answering the exam questions. If the student loses focus, the VR environment will simulate shaky, inaccurate writing.
+
+5. The focus score is exposed via **AWS API Gateway** and can be retrieved by the VR application or any external system, giving immediate feedback to both the student and the teacher.
 
 ---
 
