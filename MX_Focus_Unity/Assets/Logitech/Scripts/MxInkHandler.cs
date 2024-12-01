@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -5,11 +6,26 @@ using UnityEngine.InputSystem;
 using UnityEngine.Networking; // For UnityWebRequest
 using UnityEngine.UI; // For UI components
 
+[Serializable]
+public class CalmnessResponse
+{
+    public int statusCode;
+    public string body;
+}
+
+[Serializable]
+public class CalmnessBody
+{
+    public float calmness;
+}
+
 public class MxInkHandler : StylusHandler
 {
-    // public float paperSizeMultiplier = 1.0f; // New variable to control paper and text size
-    public float paperSizeMultiplier = 0.3f; // New variable to control paper and text size
+    // Status and Calmness messages
+    private string _statusMessage = "Status: Ready";
+    private string _calmnessMessage = "Calmness: N/A";
 
+    public float paperSizeMultiplier = 0.3f; // Variable to control paper and text size
 
     public Color active_color = Color.gray;
     public Color double_tap_active_color = Color.cyan;
@@ -41,17 +57,32 @@ public class MxInkHandler : StylusHandler
     private GameObject _noiseCube;
     private bool _noiseActive = false; // Tracks if noise effect is active
 
+    // Connect cube (green cube)
+    private GameObject _connectCube;
+
+    // Orange cube
+    private GameObject _orangeCube;
+
     // List to keep track of drawn lines or points
     private List<GameObject> _drawnElements = new List<GameObject>();
 
     // URL of the Google Docs document
     private string _documentURL = "https://docs.google.com/document/d/1GcIXo94zBM-XJd1duxemQnhjOSwQERW17WEa2QHvS70/export?format=txt";
 
+    // URL for calmness data
+    private string _calmnessURL = "https://7me4t4owwi.execute-api.us-west-2.amazonaws.com/prod/calmness_data";
+
     // Reference to the Text component on the paper
     private Text _paperText;
 
     // Coroutine for updating the document text
     private Coroutine _updateTextCoroutine;
+
+    // Coroutine for fetching calmness data
+    private Coroutine _calmnessCoroutine;
+
+    // Variable to store the current calmness value
+    private float _currentCalmness = 1.0f; // Initialized to a high value
 
     private void Awake()
     {
@@ -64,6 +95,9 @@ public class MxInkHandler : StylusHandler
 
         CreateResetButton();
         CreateNoiseCube();
+        CreateConnectCube(); // Added for connect cube
+        CreateOrangeCube();  // Added for orange cube
+        // Removed CreateStatusText
     }
 
     private void OnDestroy()
@@ -72,6 +106,10 @@ public class MxInkHandler : StylusHandler
         if (_updateTextCoroutine != null)
         {
             StopCoroutine(_updateTextCoroutine);
+        }
+        if (_calmnessCoroutine != null)
+        {
+            StopCoroutine(_calmnessCoroutine);
         }
     }
 
@@ -143,7 +181,7 @@ public class MxInkHandler : StylusHandler
             }
         }
 
-        // Check for reset button press with front button
+        // Check for reset, noise, connect, and orange cube interactions with front button
         if (_stylus.cluster_front_value) // Front button is pressed
         {
             // Check for reset button interaction
@@ -163,6 +201,26 @@ public class MxInkHandler : StylusHandler
                 if (distanceToNoiseCube < 0.05f)
                 {
                     ToggleNoiseEffect();
+                }
+            }
+
+            // Check for connect cube interaction
+            if (_connectCube != null)
+            {
+                float distanceToConnectCube = Vector3.Distance(transform.position, _connectCube.transform.position);
+                if (distanceToConnectCube < 0.05f)
+                {
+                    StartBluetoothConnection();
+                }
+            }
+
+            // Check for orange cube interaction
+            if (_orangeCube != null)
+            {
+                float distanceToOrangeCube = Vector3.Distance(transform.position, _orangeCube.transform.position);
+                if (distanceToOrangeCube < 0.05f)
+                {
+                    StartCalmnessFetching();
                 }
             }
         }
@@ -191,6 +249,158 @@ public class MxInkHandler : StylusHandler
                     _noiseCube.transform.position = transform.position;
                 }
             }
+
+            // Allow moving the connect cube when erase button is pressed near it
+            if (_connectCube != null)
+            {
+                float distanceToConnectCube = Vector3.Distance(transform.position, _connectCube.transform.position);
+                if (distanceToConnectCube < 0.05f)
+                {
+                    _connectCube.transform.position = transform.position;
+                }
+            }
+
+            // Allow moving the orange cube when erase button is pressed near it
+            if (_orangeCube != null)
+            {
+                float distanceToOrangeCube = Vector3.Distance(transform.position, _orangeCube.transform.position);
+                if (distanceToOrangeCube < 0.05f)
+                {
+                    _orangeCube.transform.position = transform.position;
+                }
+            }
+        }
+    }
+
+    private void StartBluetoothConnection()
+    {
+        // Simulate Bluetooth scanning and connecting to Muse2 EEG headband
+        // In actual implementation, you need to use a Bluetooth plugin or SDK
+        UpdateStatus("Starting Bluetooth scan...");
+
+        // Simulate found devices
+        List<string> devices = new List<string> { "Device A", "Device B", "Muse2 EEG Headband", "Device C" };
+
+        // Display choices to user
+        ShowDeviceSelectionUI(devices);
+    }
+
+    private void ShowDeviceSelectionUI(List<string> devices)
+    {
+        // Create a Canvas
+        GameObject canvasObject = new GameObject("DeviceSelectionCanvas");
+        canvasObject.transform.SetParent(transform, false); // Attach to stylus for simplicity
+        canvasObject.transform.localPosition = new Vector3(0f, 0f, 0.5f); // Position it in front of the stylus
+
+        Canvas canvas = canvasObject.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+        canvas.worldCamera = Camera.main; // Assign the main camera
+
+        CanvasScaler canvasScaler = canvasObject.AddComponent<CanvasScaler>();
+        canvasScaler.dynamicPixelsPerUnit = 10f;
+
+        // Set the size of the Canvas
+        RectTransform canvasRect = canvas.GetComponent<RectTransform>();
+        canvasRect.sizeDelta = new Vector2(300f, 200f); // Adjust size as needed
+
+        // Add a Vertical Layout Group to arrange buttons
+        VerticalLayoutGroup layoutGroup = canvasObject.AddComponent<VerticalLayoutGroup>();
+        layoutGroup.childAlignment = TextAnchor.MiddleCenter;
+        layoutGroup.childForceExpandHeight = false;
+        layoutGroup.childControlHeight = true;
+        layoutGroup.spacing = 10f; // Add spacing between buttons
+
+        // Add a background image for better visibility
+        GameObject background = new GameObject("Background");
+        background.transform.SetParent(canvasObject.transform, false);
+        Image bgImage = background.AddComponent<Image>();
+        bgImage.color = new Color(1f, 1f, 1f, 0.8f); // Semi-transparent white
+
+        RectTransform bgRect = background.GetComponent<RectTransform>();
+        bgRect.anchorMin = Vector2.zero;
+        bgRect.anchorMax = Vector2.one;
+        bgRect.offsetMin = Vector2.zero;
+        bgRect.offsetMax = Vector2.zero;
+
+        // For each device, create a button
+        foreach (string deviceName in devices)
+        {
+            GameObject buttonObject = new GameObject(deviceName + "Button");
+            buttonObject.transform.SetParent(canvasObject.transform, false);
+
+            Button button = buttonObject.AddComponent<Button>();
+            Image image = buttonObject.AddComponent<Image>();
+            image.color = Color.white;
+
+            // Add text to the button
+            GameObject textObject = new GameObject("Text");
+            textObject.transform.SetParent(buttonObject.transform, false);
+
+            Text text = textObject.AddComponent<Text>();
+            text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            text.fontSize = 14;
+            text.alignment = TextAnchor.MiddleCenter;
+            text.text = deviceName;
+            text.color = Color.black;
+
+            RectTransform textRect = text.GetComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = Vector2.zero;
+            textRect.offsetMax = Vector2.zero;
+
+            // Adjust the button size
+            RectTransform buttonRect = button.GetComponent<RectTransform>();
+            buttonRect.sizeDelta = new Vector2(200f, 40f); // Adjust size as needed
+
+            // Add listener to button
+            button.onClick.AddListener(() => OnDeviceSelected(deviceName));
+        }
+    }
+
+    private void OnDeviceSelected(string deviceName)
+    {
+        // Handle device selection
+        UpdateStatus("Selected device: " + deviceName);
+
+        // Simulate connecting to device
+        if (deviceName == "Muse2 EEG Headband")
+        {
+            UpdateStatus("Connecting to Muse2 EEG Headband...");
+            // Implement connection logic here
+            // Note: Actual connection requires SDK and platform-specific code
+        }
+        else
+        {
+            UpdateStatus("Connecting to " + deviceName + "...");
+        }
+
+        // Destroy the device selection UI
+        Destroy(GameObject.Find("DeviceSelectionCanvas"));
+    }
+
+    private void UpdateStatus(string message)
+    {
+        _statusMessage = $"Status: {message}";
+        UpdatePaperText();
+    }
+
+    private void UpdateCalmness(float value)
+    {
+        _currentCalmness = value; // Update the current calmness value
+        _calmnessMessage = $"Calmness: {value:F4}";
+        UpdatePaperText();
+    }
+
+    private void UpdatePaperText()
+    {
+        if (_paperText != null)
+        {
+            string documentText = _paperText.text.Contains("\n\n") ?
+                _paperText.text.Substring(_paperText.text.IndexOf("\n\n") + 2) :
+                "";
+
+            _paperText.text = $"{_statusMessage}\n{_calmnessMessage}\n\n{documentText}";
         }
     }
 
@@ -213,7 +423,6 @@ public class MxInkHandler : StylusHandler
 
         // Scale the paper to a reasonable size
         float paperScale = 0.1f * paperSizeMultiplier;
-        // _paper.transform.localScale = new Vector3(0.1f, 1f, 0.1f);
         _paper.transform.localScale = new Vector3(paperScale, 1f, paperScale);
 
         // Set the paper's material color to white
@@ -227,9 +436,8 @@ public class MxInkHandler : StylusHandler
         // Rotate the canvas to lie flat on the paper
         canvasObject.transform.localRotation = Quaternion.Euler(90f, 0f, 0f); // Face upwards
 
-        // canvasObject.transform.localScale = Vector3.one * 0.01f; // Adjust scale to match paper size
-        canvasObject.transform.localScale = Vector3.one * 0.01f * paperSizeMultiplier; // Adjust scale to match paper size
-
+        // Adjust scale to match paper size
+        canvasObject.transform.localScale = Vector3.one * 0.01f * paperSizeMultiplier;
 
         Canvas canvas = canvasObject.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.WorldSpace;
@@ -237,9 +445,7 @@ public class MxInkHandler : StylusHandler
 
         // Set the size of the Canvas
         RectTransform canvasRect = canvas.GetComponent<RectTransform>();
-        // canvasRect.sizeDelta = new Vector2(1000f, 1000f); // Adjust size as needed
         canvasRect.sizeDelta = new Vector2(1000f * paperSizeMultiplier, 1000f * paperSizeMultiplier); // Adjust size as needed
-
 
         // Create a Text UI element
         GameObject textObject = new GameObject("PaperText");
@@ -250,14 +456,13 @@ public class MxInkHandler : StylusHandler
 
         Text text = textObject.AddComponent<Text>();
         text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-        // text.fontSize = 20;
         text.fontSize = Mathf.RoundToInt(20 * paperSizeMultiplier); // Adjust font size
 
         text.alignment = TextAnchor.MiddleCenter;
         text.horizontalOverflow = HorizontalWrapMode.Wrap;
         text.verticalOverflow = VerticalWrapMode.Truncate;
         text.color = Color.black;
-        text.text = "Loading...";
+        text.text = $"{_statusMessage}\n{_calmnessMessage}\n\nLoading...";
 
         // Adjust the RectTransform
         RectTransform textRect = text.GetComponent<RectTransform>();
@@ -267,9 +472,6 @@ public class MxInkHandler : StylusHandler
         // Assign the text reference
         _paperText = text;
     }
-
-
-
 
     private void CreateResetButton()
     {
@@ -289,6 +491,26 @@ public class MxInkHandler : StylusHandler
         _noiseCube.GetComponent<Renderer>().material.color = Color.blue;
     }
 
+    // Method to create the connect cube (green)
+    private void CreateConnectCube()
+    {
+        // Create a cube for the connect effect
+        _connectCube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        _connectCube.transform.position = new Vector3(0f, 1f, 0.1f); // Position it where it's accessible
+        _connectCube.transform.localScale = new Vector3(0.05f, 0.05f, 0.05f);
+        _connectCube.GetComponent<Renderer>().material.color = Color.green;
+    }
+
+    // Method to create the orange cube
+    private void CreateOrangeCube()
+    {
+        // Create a cube for the calmness effect
+        _orangeCube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        _orangeCube.transform.position = new Vector3(0f, 1f, -0.1f); // Position it where it's accessible
+        _orangeCube.transform.localScale = new Vector3(0.05f, 0.05f, 0.05f);
+        _orangeCube.GetComponent<Renderer>().material.color = new Color(1f, 0.65f, 0f); // Orange color
+    }
+
     private void ResetPaper()
     {
         if (_paper != null)
@@ -303,6 +525,11 @@ public class MxInkHandler : StylusHandler
                 StopCoroutine(_updateTextCoroutine);
                 _updateTextCoroutine = null;
             }
+
+            // Reset status and calmness messages
+            _statusMessage = "Status: Ready";
+            _calmnessMessage = "Calmness: N/A";
+            UpdatePaperText();
         }
         // Destroy all drawn elements
         foreach (GameObject element in _drawnElements)
@@ -310,6 +537,15 @@ public class MxInkHandler : StylusHandler
             Destroy(element);
         }
         _drawnElements.Clear();
+
+        // Stop calmness fetching if active
+        if (_calmnessCoroutine != null)
+        {
+            StopCoroutine(_calmnessCoroutine);
+            _calmnessCoroutine = null;
+            _calmnessMessage = "Calmness: N/A";
+            UpdatePaperText();
+        }
     }
 
     private void ToggleNoiseEffect()
@@ -331,15 +567,20 @@ public class MxInkHandler : StylusHandler
         // Implement simple drawing by instantiating a small sphere at the tip position
         Vector3 drawPosition = transform.position;
 
-        // Apply random noise if noise effect is active
-        if (_noiseActive)
+        // Apply noise based on new conditions
+        if (_noiseActive && _calmnessCoroutine != null && _currentCalmness < 0.45f)
         {
-            float noiseAmount = 0.005f; // Adjust the noise amplitude as needed
-            drawPosition += new Vector3(
-                Random.Range(-noiseAmount, noiseAmount),
-                Random.Range(-noiseAmount, noiseAmount),
-                Random.Range(-noiseAmount, noiseAmount)
-            );
+            // 50% chance to add noise
+            if (UnityEngine.Random.value < 0.5f)
+            {
+                float noiseAmount = 0.005f; // Adjust the noise amplitude as needed
+                drawPosition += new Vector3(
+                    UnityEngine.Random.Range(-noiseAmount, noiseAmount),
+                    UnityEngine.Random.Range(-noiseAmount, noiseAmount),
+                    UnityEngine.Random.Range(-noiseAmount, noiseAmount)
+                );
+            }
+            // Else, no noise added
         }
 
         GameObject dot = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -392,15 +633,16 @@ public class MxInkHandler : StylusHandler
                     Debug.LogError("Error fetching document text: " + www.error);
                     if (_paperText != null)
                     {
-                        _paperText.text = "Error loading document";
+                        // Update status to indicate error and clear document text
+                        _paperText.text = $"{_statusMessage}\n{_calmnessMessage}\n\nError loading document.";
                     }
                 }
                 else
                 {
-                    string text = www.downloadHandler.text;
+                    string documentText = www.downloadHandler.text;
                     if (_paperText != null)
                     {
-                        _paperText.text = text;
+                        _paperText.text = $"{_statusMessage}\n{_calmnessMessage}\n\n{documentText}";
                     }
                 }
             }
@@ -408,5 +650,68 @@ public class MxInkHandler : StylusHandler
             // Wait for some time before fetching again
             yield return new WaitForSeconds(1f); // Update every 1 second
         }
+    }
+
+    private void StartCalmnessFetching()
+    {
+        if (_calmnessCoroutine == null)
+        {
+            _calmnessCoroutine = StartCoroutine(FetchCalmnessData());
+        }
+    }
+
+    private IEnumerator FetchCalmnessData()
+    {
+        while (true)
+        {
+            using (UnityWebRequest www = UnityWebRequest.Get(_calmnessURL))
+            {
+                yield return www.SendWebRequest();
+
+                if (www.result == UnityWebRequest.Result.ConnectionError || www.result == UnityWebRequest.Result.ProtocolError)
+                {
+                    Debug.LogError("Error fetching calmness data: " + www.error);
+                    UpdateCalmnessMessage("Error");
+                }
+                else
+                {
+                    string responseText = www.downloadHandler.text;
+                    try
+                    {
+                        CalmnessResponse response = JsonUtility.FromJson<CalmnessResponse>(responseText);
+                        if (response != null && !string.IsNullOrEmpty(response.body))
+                        {
+                            CalmnessBody body = JsonUtility.FromJson<CalmnessBody>(response.body);
+                            if (body != null)
+                            {
+                                UpdateCalmness(body.calmness);
+                            }
+                            else
+                            {
+                                UpdateCalmnessMessage("Invalid Data");
+                            }
+                        }
+                        else
+                        {
+                            UpdateCalmnessMessage("Invalid Response");
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogError("Error parsing calmness data: " + e.Message);
+                        UpdateCalmnessMessage("Parse Error");
+                    }
+                }
+            }
+
+            // Wait for 10 milliseconds before the next request
+            yield return new WaitForSeconds(0.01f); // 10 ms
+        }
+    }
+
+    private void UpdateCalmnessMessage(string message)
+    {
+        _calmnessMessage = $"Calmness: {message}";
+        UpdatePaperText();
     }
 }
