@@ -7,6 +7,10 @@ using UnityEngine.UI; // For UI components
 
 public class MxInkHandler : StylusHandler
 {
+    // public float paperSizeMultiplier = 1.0f; // New variable to control paper and text size
+    public float paperSizeMultiplier = 0.3f; // New variable to control paper and text size
+
+
     public Color active_color = Color.gray;
     public Color double_tap_active_color = Color.cyan;
     public Color default_color = Color.black;
@@ -196,9 +200,22 @@ public class MxInkHandler : StylusHandler
         _paper = GameObject.CreatePrimitive(PrimitiveType.Plane);
         Vector3 paperPosition = transform.position + Vector3.down * 0.015f; // Slightly below the tip
         _paper.transform.position = paperPosition;
-        _paper.transform.rotation = Quaternion.Euler(0, transform.eulerAngles.y, 0);
+
+        // Calculate the angle to rotate the paper so that it faces the user's gaze direction
+        Vector3 userForward = Camera.main.transform.forward;
+        userForward.y = 0; // Project onto XZ plane
+        userForward.Normalize();
+
+        float angle = Vector3.SignedAngle(Vector3.forward, userForward, Vector3.up);
+
+        // Rotate the paper around Y-axis to face the user's direction
+        _paper.transform.rotation = Quaternion.Euler(0f, angle, 0f);
+
         // Scale the paper to a reasonable size
-        _paper.transform.localScale = new Vector3(0.1f, 1f, 0.1f);
+        float paperScale = 0.1f * paperSizeMultiplier;
+        // _paper.transform.localScale = new Vector3(0.1f, 1f, 0.1f);
+        _paper.transform.localScale = new Vector3(paperScale, 1f, paperScale);
+
         // Set the paper's material color to white
         _paper.GetComponent<Renderer>().material.color = Color.white;
 
@@ -206,10 +223,13 @@ public class MxInkHandler : StylusHandler
         GameObject canvasObject = new GameObject("PaperCanvas");
         canvasObject.transform.SetParent(_paper.transform, false);
         canvasObject.transform.localPosition = new Vector3(0f, 0.01f, 0f); // Slightly above the paper surface
-        // canvasObject.transform.localRotation = Quaternion.Euler(90f, 0f, 0f); // Rotate so canvas faces upwards
-        canvasObject.transform.localRotation = Quaternion.Euler(90f, 90f, 0f); // Rotate so canvas faces upwards
 
-        canvasObject.transform.localScale = Vector3.one * 0.01f; // Adjust scale to match paper size
+        // Rotate the canvas to lie flat on the paper
+        canvasObject.transform.localRotation = Quaternion.Euler(90f, 0f, 0f); // Face upwards
+
+        // canvasObject.transform.localScale = Vector3.one * 0.01f; // Adjust scale to match paper size
+        canvasObject.transform.localScale = Vector3.one * 0.01f * paperSizeMultiplier; // Adjust scale to match paper size
+
 
         Canvas canvas = canvasObject.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.WorldSpace;
@@ -217,27 +237,22 @@ public class MxInkHandler : StylusHandler
 
         // Set the size of the Canvas
         RectTransform canvasRect = canvas.GetComponent<RectTransform>();
-        canvasRect.sizeDelta = new Vector2(1000f, 1000f); // Adjust size as needed
+        // canvasRect.sizeDelta = new Vector2(1000f, 1000f); // Adjust size as needed
+        canvasRect.sizeDelta = new Vector2(1000f * paperSizeMultiplier, 1000f * paperSizeMultiplier); // Adjust size as needed
 
-        // Add an Image component for the background
-        GameObject imageObject = new GameObject("PaperBackground");
-        imageObject.transform.SetParent(canvasObject.transform, false);
-        Image image = imageObject.AddComponent<Image>();
-        image.color = Color.white;
-
-        RectTransform imageRect = image.GetComponent<RectTransform>();
-        imageRect.sizeDelta = canvasRect.sizeDelta;
-        imageRect.localPosition = Vector3.zero;
 
         // Create a Text UI element
         GameObject textObject = new GameObject("PaperText");
         textObject.transform.SetParent(canvasObject.transform, false);
         textObject.transform.localPosition = Vector3.zero;
         textObject.transform.localRotation = Quaternion.identity;
+        textObject.transform.localScale = Vector3.one;
 
         Text text = textObject.AddComponent<Text>();
         text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-        text.fontSize = 20;
+        // text.fontSize = 20;
+        text.fontSize = Mathf.RoundToInt(20 * paperSizeMultiplier); // Adjust font size
+
         text.alignment = TextAnchor.MiddleCenter;
         text.horizontalOverflow = HorizontalWrapMode.Wrap;
         text.verticalOverflow = VerticalWrapMode.Truncate;
@@ -252,6 +267,9 @@ public class MxInkHandler : StylusHandler
         // Assign the text reference
         _paperText = text;
     }
+
+
+
 
     private void CreateResetButton()
     {
