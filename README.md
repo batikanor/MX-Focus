@@ -1,6 +1,6 @@
-Here's a sample README for the project:
+## MX Focus Reader
 
-## EEG Calmness 
+![eeg_headband](muse/calmness_model.png)
 
 The project consists of the following key components:
 1. **Muse Headband**: A wearable EEG device that captures real-time brainwave signals.
