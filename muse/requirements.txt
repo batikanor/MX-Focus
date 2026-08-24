@@ -6,7 +6,7 @@ numpy>=2.0
 scipy>=1.2          # butter(..., fs=) keyword
 pandas>=1.0         # CSV paths in bandpower and receive_eeg
 
-# stream_eeg.py / receive_eeg.py
+# stream_eeg.py / receive_eeg.py / serve_focus.py
 pylsl>=1.16
 websockets>=12.0
 
@@ -15,3 +15,4 @@ paho-mqtt>=2.0      # CallbackAPIVersion, used by the existing connect code
 
 # Tests only.
 pytest>=7.0
+pytest-asyncio>=0.23    # the transport tests drive a real socket
