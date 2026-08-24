@@ -1,0 +1,17 @@
+# Runtime dependencies for the muse/ pipeline.
+
+# bandpower.py
+# numpy 2.0 is a hard floor: np.trapezoid replaced np.trapz in that release.
+numpy>=2.0
+scipy>=1.2          # butter(..., fs=) keyword
+pandas>=1.0         # CSV paths in bandpower and receive_eeg
+
+# stream_eeg.py / receive_eeg.py
+pylsl>=1.16
+websockets>=12.0
+
+# upload_egg_aws.py
+paho-mqtt>=2.0      # CallbackAPIVersion, used by the existing connect code
+
+# Tests only.
+pytest>=7.0
