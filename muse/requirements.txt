@@ -1,0 +1,19 @@
+# --- Muse / LSL acquisition -------------------------------------------------
+muselsl>=2.2.2          # BLE -> LSL bridge for the Muse headband
+pylsl>=1.16.2           # Lab Streaming Layer Python bindings (ships liblsl)
+bleak>=0.21.1           # BLE backend used by muselsl on Windows
+
+# --- Signal processing / ML -------------------------------------------------
+numpy>=1.24,<2.0        # <2.0: muselsl/mne ecosystem is not fully NumPy-2 clean
+scipy>=1.11             # Welch PSD -> band powers
+pandas>=2.0             # CSV logging in receive_eeg.py
+scikit-learn>=1.3       # calmness / focus classifier
+joblib>=1.3             # model persistence
+
+# --- Transport --------------------------------------------------------------
+websockets>=12.0        # stream_eeg.py local WebSocket server
+paho-mqtt>=2.0          # upload_egg_aws.py -> AWS IoT Core over MQTT/TLS
+requests>=2.31          # convenience for hitting the API Gateway endpoint
+
+# --- Visualisation (optional, used by `muselsl view`) -----------------------
+matplotlib>=3.7
