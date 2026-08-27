@@ -1,22 +1,34 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Networking; // For UnityWebRequest
 using UnityEngine.UI; // For UI components
 
+// Mirrors the flat JSON object served by GET /metrics in muse/focus_metrics.py
+// (fields not declared here, e.g. band_powers, are simply ignored by JsonUtility).
 [Serializable]
-public class CalmnessResponse
-{
-    public int statusCode;
-    public string body;
-}
-
-[Serializable]
-public class CalmnessBody
+public class FocusMetrics
 {
     public float calmness;
+    public float focus;
+    public float engagement;
+    public float theta_beta_ratio;
+    public float workload;
+    public float alpha_asymmetry;
+    public float drowsiness;
+    public float artifact_ratio;
+    public bool stream_ok;
+}
+
+// Body for POST /session/event -- see SessionLogger.log_event in focus_metrics.py.
+[Serializable]
+public class SessionEvent
+{
+    public string type;
+    public string question;
 }
 
 public class MxInkHandler : StylusHandler
@@ -69,8 +81,20 @@ public class MxInkHandler : StylusHandler
     // URL of the Google Docs document
     private string _documentURL = "https://docs.google.com/document/d/1GcIXo94zBM-XJd1duxemQnhjOSwQERW17WEa2QHvS70/export?format=txt";
 
-    // URL for calmness data
-    private string _calmnessURL = "https://7me4t4owwi.execute-api.us-west-2.amazonaws.com/prod/calmness_data";
+    // URL for the local focus-metrics server (muse/focus_metrics.py).
+    // NOTE: the original AWS API Gateway endpoint
+    // (https://7me4t4owwi.execute-api.us-west-2.amazonaws.com/prod/calmness_data)
+    // no longer resolves - that stack appears to have been torn down.
+    // /metrics returns the full metric set (focus, drowsiness, engagement, ...)
+    // as a flat JSON object; see FocusMetrics above. Run `python focus_metrics.py`
+    // in muse/ before pressing Play. Swap back to a real AWS endpoint here (and
+    // back to the old {"statusCode","body"} envelope parsing) if you redeploy one.
+    private string _metricsURL = "http://127.0.0.1:8000/metrics";
+    private string _sessionEventURL = "http://127.0.0.1:8000/session/event";
+
+    [Tooltip("Seconds between focus-metric polls. The server only recomputes " +
+             "metrics 10x/sec, so polling much faster than this just wastes requests.")]
+    [SerializeField] private float _metricsPollInterval = 0.5f;
 
     // Reference to the Text component on the paper
     private Text _paperText;
@@ -78,11 +102,28 @@ public class MxInkHandler : StylusHandler
     // Coroutine for updating the document text
     private Coroutine _updateTextCoroutine;
 
-    // Coroutine for fetching calmness data
-    private Coroutine _calmnessCoroutine;
+    // Coroutine for fetching focus metrics
+    private Coroutine _metricsCoroutine;
 
-    // Variable to store the current calmness value
-    private float _currentCalmness = 1.0f; // Initialized to a high value
+    // Current metric snapshot, updated every _metricsPollInterval seconds.
+    // Calmness/focus start high, drowsiness starts low, so a slow/failed
+    // connection reads as "fine" rather than immediately flagging the student.
+    private float _currentCalmness = 1.0f;
+    private float _currentFocus = 1.0f;
+    private float _currentDrowsiness = 0.0f;
+
+    // Question numbers ("1.", "2.", ...) already seen in the live exam
+    // document, so we only log/announce a question the first time it appears
+    // (the teacher's Google Doc is updated progressively during the exam).
+    private readonly HashSet<int> _seenQuestions = new HashSet<int>();
+    private static readonly Regex _questionNumberRegex = new Regex(@"^\s*(\d+)\.", RegexOptions.Multiline);
+
+    [Header("Multi-band feedback")]
+    [Tooltip("Max positional jitter (world units) applied at full inattention (focus = 0).")]
+    [SerializeField] private float _maxNoiseAmount = 0.006f;
+    [Tooltip("Peak volume of the ambient drowsiness drone at drowsiness = 1.")]
+    [SerializeField] private float _maxDrowsinessVolume = 0.25f;
+    private AudioSource _drowsinessAudio;
 
     private void Awake()
     {
@@ -98,6 +139,8 @@ public class MxInkHandler : StylusHandler
         CreateConnectCube(); // Added for connect cube
         CreateOrangeCube();  // Added for orange cube
         // Removed CreateStatusText
+
+        SetupDrowsinessAudio();
     }
 
     private void OnDestroy()
@@ -107,10 +150,51 @@ public class MxInkHandler : StylusHandler
         {
             StopCoroutine(_updateTextCoroutine);
         }
-        if (_calmnessCoroutine != null)
+        if (_metricsCoroutine != null)
         {
-            StopCoroutine(_calmnessCoroutine);
+            StopCoroutine(_metricsCoroutine);
         }
+    }
+
+    // Builds a short, soft low-frequency drone procedurally (no audio asset
+    // needed) and loops it. Its volume is driven continuously by the
+    // drowsiness metric in Update() -- see ApplyDrowsinessAudio().
+    private void SetupDrowsinessAudio()
+    {
+        const int sampleRate = 44100;
+        const float toneHz = 110f;         // low A2 -- reads as "ambient", not alarming
+        const float lengthSeconds = 2f;    // loop period; long enough to avoid audible clicking
+        int sampleCount = Mathf.RoundToInt(sampleRate * lengthSeconds);
+
+        var clip = AudioClip.Create("DrowsinessDrone", sampleCount, 1, sampleRate, false);
+        var samples = new float[sampleCount];
+        for (int i = 0; i < sampleCount; i++)
+        {
+            float t = (float)i / sampleRate;
+            // Two close frequencies summed create a slow "beat" throb rather
+            // than a flat tone, which reads as more organic/ambient.
+            samples[i] = 0.6f * Mathf.Sin(2f * Mathf.PI * toneHz * t)
+                       + 0.4f * Mathf.Sin(2f * Mathf.PI * (toneHz * 1.005f) * t);
+        }
+        clip.SetData(samples, 0);
+
+        _drowsinessAudio = gameObject.AddComponent<AudioSource>();
+        _drowsinessAudio.clip = clip;
+        _drowsinessAudio.loop = true;
+        _drowsinessAudio.playOnAwake = false;
+        _drowsinessAudio.spatialBlend = 0f; // ambient, not positional
+        _drowsinessAudio.volume = 0f;
+        _drowsinessAudio.Play();
+    }
+
+    // Continuous ambient cue: volume rises smoothly with drowsiness instead
+    // of a binary on/off alert. Squaring the ratio keeps it silent at low/
+    // moderate drowsiness and only becomes noticeable as it climbs.
+    private void ApplyDrowsinessAudio()
+    {
+        if (_drowsinessAudio == null) return;
+        float target = _maxDrowsinessVolume * _currentDrowsiness * _currentDrowsiness;
+        _drowsinessAudio.volume = Mathf.Lerp(_drowsinessAudio.volume, target, Time.deltaTime * 2f);
     }
 
     private void OnDeviceChange(InputDevice device, InputDeviceChange change)
@@ -137,6 +221,8 @@ public class MxInkHandler : StylusHandler
 
     void Update()
     {
+        ApplyDrowsinessAudio();
+
         _stylus.inkingPose.position = transform.position;
         _stylus.inkingPose.rotation = transform.rotation;
         _stylus.tip_value = _tipActionRef.action.ReadValue<float>();
@@ -220,7 +306,7 @@ public class MxInkHandler : StylusHandler
                 float distanceToOrangeCube = Vector3.Distance(transform.position, _orangeCube.transform.position);
                 if (distanceToOrangeCube < 0.05f)
                 {
-                    StartCalmnessFetching();
+                    StartMetricsFetching();
                 }
             }
         }
@@ -385,10 +471,12 @@ public class MxInkHandler : StylusHandler
         UpdatePaperText();
     }
 
-    private void UpdateCalmness(float value)
+    private void UpdateMetrics(FocusMetrics m)
     {
-        _currentCalmness = value; // Update the current calmness value
-        _calmnessMessage = $"Calmness: {value:F4}";
+        _currentCalmness = m.calmness;
+        _currentFocus = m.focus;
+        _currentDrowsiness = m.drowsiness;
+        _calmnessMessage = $"Focus: {m.focus:F2}  Calm: {m.calmness:F2}  Drowsy: {m.drowsiness:F2}";
         UpdatePaperText();
     }
 
@@ -538,11 +626,11 @@ public class MxInkHandler : StylusHandler
         }
         _drawnElements.Clear();
 
-        // Stop calmness fetching if active
-        if (_calmnessCoroutine != null)
+        // Stop metrics fetching if active
+        if (_metricsCoroutine != null)
         {
-            StopCoroutine(_calmnessCoroutine);
-            _calmnessCoroutine = null;
+            StopCoroutine(_metricsCoroutine);
+            _metricsCoroutine = null;
             _calmnessMessage = "Calmness: N/A";
             UpdatePaperText();
         }
@@ -567,20 +655,23 @@ public class MxInkHandler : StylusHandler
         // Implement simple drawing by instantiating a small sphere at the tip position
         Vector3 drawPosition = transform.position;
 
-        // Apply noise based on new conditions
-        if (_noiseActive && _calmnessCoroutine != null && _currentCalmness < 0.45f)
+        // Jitter scales continuously with inattention (1 - focus) instead of
+        // a fixed amplitude that only ever switched fully on/off past a
+        // calmness threshold. A fully focused student writes a clean line;
+        // as focus drops the line gets shakier by degrees, matching how
+        // attention actually degrades rather than a binary "distracted" flag.
+        if (_noiseActive && _metricsCoroutine != null)
         {
-            // 50% chance to add noise
-            if (UnityEngine.Random.value < 0.5f)
+            float inattention = 1f - _currentFocus;
+            float noiseAmount = _maxNoiseAmount * inattention;
+            if (noiseAmount > 0.0001f)
             {
-                float noiseAmount = 0.005f; // Adjust the noise amplitude as needed
                 drawPosition += new Vector3(
                     UnityEngine.Random.Range(-noiseAmount, noiseAmount),
                     UnityEngine.Random.Range(-noiseAmount, noiseAmount),
                     UnityEngine.Random.Range(-noiseAmount, noiseAmount)
                 );
             }
-            // Else, no noise added
         }
 
         GameObject dot = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -644,6 +735,7 @@ public class MxInkHandler : StylusHandler
                     {
                         _paperText.text = $"{_statusMessage}\n{_calmnessMessage}\n\n{documentText}";
                     }
+                    DetectNewQuestions(documentText);
                 }
             }
 
@@ -652,66 +744,105 @@ public class MxInkHandler : StylusHandler
         }
     }
 
-    private void StartCalmnessFetching()
+    // The teacher adds/updates exam questions in the live Google Doc while
+    // the student is working, so "which question was on screen when focus
+    // dropped" is recoverable from *when a question number first appeared*
+    // in the fetched text. Each first sighting is logged as a timestamped
+    // session event; muse/session_report.py uses these to annotate the
+    // teacher's focus/engagement/workload timeline per question.
+    private void DetectNewQuestions(string documentText)
     {
-        if (_calmnessCoroutine == null)
+        if (string.IsNullOrEmpty(documentText)) return;
+
+        foreach (Match match in _questionNumberRegex.Matches(documentText))
         {
-            _calmnessCoroutine = StartCoroutine(FetchCalmnessData());
+            if (int.TryParse(match.Groups[1].Value, out int questionNumber)
+                && _seenQuestions.Add(questionNumber))
+            {
+                StartCoroutine(PostSessionEvent(new SessionEvent
+                {
+                    type = "question_appeared",
+                    question = questionNumber.ToString(),
+                }));
+            }
         }
     }
 
-    private IEnumerator FetchCalmnessData()
+    private IEnumerator PostSessionEvent(SessionEvent evt)
+    {
+        string json = JsonUtility.ToJson(evt);
+        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+
+        using (var www = new UnityWebRequest(_sessionEventURL, "POST"))
+        {
+            www.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            www.downloadHandler = new DownloadHandlerBuffer();
+            www.SetRequestHeader("Content-Type", "application/json");
+            yield return www.SendWebRequest();
+
+            if (www.result == UnityWebRequest.Result.ConnectionError || www.result == UnityWebRequest.Result.ProtocolError)
+            {
+                // Non-fatal: the metrics/session server may simply not be running.
+                Debug.LogWarning("Could not log session event: " + www.error);
+            }
+        }
+    }
+
+    private void StartMetricsFetching()
+    {
+        if (_metricsCoroutine == null)
+        {
+            _metricsCoroutine = StartCoroutine(FetchFocusMetrics());
+        }
+    }
+
+    private IEnumerator FetchFocusMetrics()
     {
         while (true)
         {
-            using (UnityWebRequest www = UnityWebRequest.Get(_calmnessURL))
+            using (UnityWebRequest www = UnityWebRequest.Get(_metricsURL))
             {
                 yield return www.SendWebRequest();
 
                 if (www.result == UnityWebRequest.Result.ConnectionError || www.result == UnityWebRequest.Result.ProtocolError)
                 {
-                    Debug.LogError("Error fetching calmness data: " + www.error);
-                    UpdateCalmnessMessage("Error");
+                    Debug.LogError("Error fetching focus metrics: " + www.error);
+                    UpdateMetricsMessage("Error");
                 }
                 else
                 {
                     string responseText = www.downloadHandler.text;
                     try
                     {
-                        CalmnessResponse response = JsonUtility.FromJson<CalmnessResponse>(responseText);
-                        if (response != null && !string.IsNullOrEmpty(response.body))
+                        FocusMetrics metrics = JsonUtility.FromJson<FocusMetrics>(responseText);
+                        if (metrics != null)
                         {
-                            CalmnessBody body = JsonUtility.FromJson<CalmnessBody>(response.body);
-                            if (body != null)
-                            {
-                                UpdateCalmness(body.calmness);
-                            }
-                            else
-                            {
-                                UpdateCalmnessMessage("Invalid Data");
-                            }
+                            UpdateMetrics(metrics);
                         }
                         else
                         {
-                            UpdateCalmnessMessage("Invalid Response");
+                            UpdateMetricsMessage("Invalid Data");
                         }
                     }
                     catch (Exception e)
                     {
-                        Debug.LogError("Error parsing calmness data: " + e.Message);
-                        UpdateCalmnessMessage("Parse Error");
+                        Debug.LogError("Error parsing focus metrics: " + e.Message);
+                        UpdateMetricsMessage("Parse Error");
                     }
                 }
             }
 
-            // Wait for 10 milliseconds before the next request
-            yield return new WaitForSeconds(0.01f); // 10 ms
+            // The server only recomputes metrics 10x/sec (see UPDATE_HZ in
+            // focus_metrics.py); polling faster than _metricsPollInterval
+            // just adds load for no new information. This was hardcoded to
+            // 10ms (100 req/s) before.
+            yield return new WaitForSeconds(_metricsPollInterval);
         }
     }
 
-    private void UpdateCalmnessMessage(string message)
+    private void UpdateMetricsMessage(string message)
     {
-        _calmnessMessage = $"Calmness: {message}";
+        _calmnessMessage = $"Metrics: {message}";
         UpdatePaperText();
     }
 }

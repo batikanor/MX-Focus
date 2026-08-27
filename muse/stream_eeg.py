@@ -18,11 +18,13 @@ async def stream_eeg(websocket):  # Ignoring 'path' argument
     
     try:
         while True:
-            data, timestamps = inlet.pull_chunk(timeout=1.0, max_samples=1)
+            # Pull whatever has accumulated since the last call instead of
+            # 1 sample/s (was discarding ~99.6% of a 256 Hz stream). A short
+            # timeout keeps this loop responsive to disconnects/cancellation.
+            data, timestamps = inlet.pull_chunk(timeout=0.1, max_samples=LSL_EEG_CHUNK * 8)
             if timestamps and data:
                 message = json.dumps({"timestamps": timestamps, "data": data})
                 await websocket.send(message)
-                await asyncio.sleep(1)
 
     except Exception as e:
         print(f"Error during streaming: {e}")

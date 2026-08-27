@@ -1,0 +1,205 @@
+<!doctype html>
+<!--
+  No-Unity preview of the multi-band closed-loop feedback added to
+  MxInkHandler.cs (see DrawOnPaper() and ApplyDrowsinessAudio()).
+
+  This is NOT the VR app -- it's a 2D stand-in so you can see and hear the
+  same feedback loop without a headset/stylus or a Unity install. It polls
+  the exact same running server (focus_metrics.py) the Unity client talks
+  to, and reproduces the same two pieces of math:
+
+    jitter amplitude  = maxNoise * (1 - focus)          -- continuous, not binary
+    drone volume       = maxVolume * drowsiness^2        -- continuous, ambient
+
+  Usage:
+    1. Have focus_metrics.py running (python focus_metrics.py in muse/),
+       fed by either a real Muse or mock_muse_stream.py.
+    2. Open this file directly in a browser (double-click it, or drag it in).
+    3. Click "Enable audio" once (browsers block audio until a user gesture).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>MX Focus - feedback preview (no Unity needed)</title>
+<style>
+  body {
+    font-family: -apple-system, Segoe UI, Arial, sans-serif;
+    background: #0f172a; color: #e2e8f0; margin: 0; padding: 2rem;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 0.2rem; }
+  .layout { display: flex; gap: 1.6rem; flex-wrap: wrap; align-items: flex-start; }
+  .panel {
+    background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+    padding: 1rem 1.2rem;
+  }
+  canvas { background: #f8fafc; border-radius: 8px; display: block; }
+  .metrics { min-width: 260px; }
+  .row { display: flex; justify-content: space-between; padding: 0.3rem 0;
+         border-bottom: 1px solid #334155; font-size: 0.85rem; }
+  .row:last-child { border-bottom: none; }
+  .row .k { color: #94a3b8; }
+  .row .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .bar-wrap { height: 6px; background: #334155; border-radius: 3px; margin-top: 4px; overflow: hidden; }
+  .bar { height: 100%; border-radius: 3px; transition: width 0.2s linear; }
+  button {
+    background: #2563eb; color: white; border: none; border-radius: 8px;
+    padding: 0.55rem 1rem; font-size: 0.85rem; cursor: pointer; margin-right: 0.5rem;
+  }
+  button:disabled { background: #475569; cursor: default; }
+  #status { font-size: 0.8rem; color: #94a3b8; margin-top: 0.8rem; }
+  #status.bad { color: #f87171; }
+  #status.good { color: #4ade80; }
+</style>
+</head>
+<body>
+  <h1>MX Focus &mdash; live feedback preview</h1>
+
+  <div class="layout">
+    <div class="panel">
+      <canvas id="paper" width="480" height="320"></canvas>
+      <div style="margin-top:0.8rem;">
+        <button id="audioBtn">Enable audio</button>
+        <button id="pauseBtn">Pause</button>
+      </div>
+      <div id="status">connecting to http://127.0.0.1:8000 ...</div>
+    </div>
+
+    <div class="panel metrics">
+      <div class="row"><span class="k">focus (jitter driver)</span><span class="v" id="v-focus">-</span></div>
+      <div class="bar-wrap"><div class="bar" id="b-focus" style="background:#2563eb"></div></div>
+
+      <div class="row"><span class="k">drowsiness (audio driver)</span><span class="v" id="v-drowsy">-</span></div>
+      <div class="bar-wrap"><div class="bar" id="b-drowsy" style="background:#dc2626"></div></div>
+
+      <div class="row"><span class="k">calmness</span><span class="v" id="v-calm">-</span></div>
+      <div class="row"><span class="k">engagement</span><span class="v" id="v-eng">-</span></div>
+      <div class="row"><span class="k">theta/beta ratio</span><span class="v" id="v-tbr">-</span></div>
+      <div class="row"><span class="k">workload</span><span class="v" id="v-load">-</span></div>
+      <div class="row"><span class="k">artifact ratio</span><span class="v" id="v-art">-</span></div>
+    </div>
+  </div>
+
+<script>
+const METRICS_URL = "http://127.0.0.1:8000/metrics";
+const POLL_MS = 250;               // matches MxInkHandler's _metricsPollInterval
+const MAX_NOISE_PX = 26;           // 2D analogue of _maxNoiseAmount
+const MAX_DRONE_VOLUME = 0.22;     // matches _maxDrowsinessVolume
+
+let latest = { focus: 1, drowsiness: 0, calmness: 0.5, engagement: 0.5,
+               theta_beta_ratio: 0, workload: 0, artifact_ratio: 0, stream_ok: false };
+let paused = false;
+
+// ---- canvas: a handwritten-looking line whose shakiness scales with (1-focus) ----
+const canvas = document.getElementById("paper");
+const ctx = canvas.getContext("2d");
+let t = 0;
+
+function drawFrame() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "#111827";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+
+  const inattention = 1 - latest.focus;
+  const noiseAmp = MAX_NOISE_PX * inattention;   // same formula as DrawOnPaper()
+  const baseY = canvas.height / 2;
+
+  for (let x = 0; x <= canvas.width; x += 4) {
+    // A calm cursive-like baseline wave, perturbed by jitter noise.
+    const wave = Math.sin((x + t) * 0.03) * 14;
+    const jitter = (Math.random() * 2 - 1) * noiseAmp;
+    const y = baseY + wave + jitter;
+    if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  t += 3;
+}
+
+// ---- audio: an ambient drone whose volume scales with drowsiness^2 ----
+let audioCtx = null, gain = null, osc1 = null, osc2 = null;
+
+function enableAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  gain = audioCtx.createGain();
+  gain.gain.value = 0;
+
+  osc1 = audioCtx.createOscillator();
+  osc2 = audioCtx.createOscillator();
+  osc1.frequency.value = 110;          // same low A2 as the Unity drone
+  osc2.frequency.value = 110 * 1.005;  // slight detune -> slow "beat" throb
+
+  const g1 = audioCtx.createGain(); g1.gain.value = 0.6;
+  const g2 = audioCtx.createGain(); g2.gain.value = 0.4;
+  osc1.connect(g1).connect(gain);
+  osc2.connect(g2).connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc1.start(); osc2.start();
+  document.getElementById("audioBtn").textContent = "Audio enabled";
+  document.getElementById("audioBtn").disabled = true;
+}
+
+function applyDroneVolume() {
+  if (!gain) return;
+  const target = MAX_DRONE_VOLUME * latest.drowsiness * latest.drowsiness;
+  gain.gain.linearRampToValueAtTime(target, audioCtx.currentTime + 0.3);
+}
+
+// ---- polling ----
+function fmt(x) { return (typeof x === "number") ? x.toFixed(3) : "-"; }
+
+function setBar(id, value) {
+  document.getElementById(id).style.width = `${Math.max(0, Math.min(1, value)) * 100}%`;
+}
+
+async function poll() {
+  if (paused) return;
+  try {
+    const res = await fetch(METRICS_URL, { cache: "no-store" });
+    latest = await res.json();
+
+    document.getElementById("v-focus").textContent = fmt(latest.focus);
+    document.getElementById("v-drowsy").textContent = fmt(latest.drowsiness);
+    document.getElementById("v-calm").textContent = fmt(latest.calmness);
+    document.getElementById("v-eng").textContent = fmt(latest.engagement);
+    document.getElementById("v-tbr").textContent = fmt(latest.theta_beta_ratio);
+    document.getElementById("v-load").textContent = fmt(latest.workload);
+    document.getElementById("v-art").textContent = fmt(latest.artifact_ratio);
+    setBar("b-focus", latest.focus);
+    setBar("b-drowsy", latest.drowsiness);
+
+    applyDroneVolume();
+
+    const status = document.getElementById("status");
+    if (latest.stream_ok) {
+      status.textContent = "connected -- live EEG stream";
+      status.className = "good";
+    } else {
+      status.textContent = "server reachable, but no EEG stream yet (start mock_muse_stream.py or muselsl)";
+      status.className = "bad";
+    }
+  } catch (e) {
+    const status = document.getElementById("status");
+    status.textContent = "cannot reach " + METRICS_URL + " -- is focus_metrics.py running?";
+    status.className = "bad";
+  }
+}
+
+document.getElementById("audioBtn").addEventListener("click", enableAudio);
+document.getElementById("pauseBtn").addEventListener("click", (e) => {
+  paused = !paused;
+  e.target.textContent = paused ? "Resume" : "Pause";
+});
+
+setInterval(poll, POLL_MS);
+poll();
+
+function animate() {
+  drawFrame();
+  requestAnimationFrame(animate);
+}
+animate();
+</script>
+</body>
+</html>

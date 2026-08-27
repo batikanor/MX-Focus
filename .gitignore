@@ -1,3 +1,6 @@
 muse/.DS_Store
 muse/creds/*
 muse/__pycache__
+.venv/
+muse/*.csv
+muse/sessions/
